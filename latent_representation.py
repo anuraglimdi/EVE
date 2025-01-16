@@ -51,7 +51,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--latent_representation_location",
         type=str,
-        help="Location where latent vector embedding of sequences in MSA will be saved",
+        help="Folder where latent vector embedding of sequences in MSA will be saved",
     )
     args = parser.parse_args()
 
@@ -111,3 +111,13 @@ if __name__ == "__main__":
 
     print("Getting latent representations for sequences")
     latent_reps = model.get_latent_representation(data=data, device=model.device)
+
+    print("Saving dataframe with latent representation")
+    latent_reps_df = pd.DataFrame.from_dict(latent_reps, orient="index")
+    latent_reps_df.columns = [f"dim_{i+1}" for i in range(latent_reps_df.shape[1])]
+    latent_reps_df.to_csv(
+        args.latent_representation_location
+        + os.sep
+        + f"{model_name}_latent_representation.csv",
+        index=False,
+    )

@@ -554,6 +554,8 @@ class VAE_model(nn.Module):
 
                 input = torch.tensor(encoded_seq, dtype=torch.float).to(device)
                 mu, log_var = self.encoder(input)
+                # NOTE: mu is the latent representation of the sequence
+                # which otherwise would be perturbed with the log-var term
                 latent_reps[seq_name] = mu.cpu().numpy()[0]
 
         return latent_reps
