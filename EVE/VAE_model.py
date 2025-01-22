@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 import numpy as np
 import pandas as pd
 import time
@@ -445,7 +446,8 @@ class VAE_model(nn.Module):
         self, msa_data, list_mutations_location, num_samples, batch_size=256
     ):
         """
-        The column in the list_mutations dataframe that contains the mutant(s) for a given variant should be called "mutations"
+        The column in the list_mutations dataframe that contains the
+        mutant(s) for a given variant should be called "mutations"
         """
         # Multiple mutations are to be passed colon-separated
         list_mutations = pd.read_csv(list_mutations_location, header=0)
@@ -553,9 +555,82 @@ class VAE_model(nn.Module):
                         encoded_seq[j, k] = 1.0
 
                 input = torch.tensor(encoded_seq, dtype=torch.float).to(device)
-                mu, log_var = self.encoder(input)
+                mu, _ = self.encoder(input)
                 # NOTE: mu is the latent representation of the sequence
                 # which otherwise would be perturbed with the log-var term
                 latent_reps[seq_name] = mu.cpu().numpy()[0]
 
         return latent_reps
+
+    def compute_evol_indices_flexible(
+        self,
+        wt_seq,
+        list_mutant_sequences,
+        alphabet="ACDEFGHIKLMNPQRSTVWY",
+        batch_size=256,
+        num_samples=50,
+    ):
+        """
+        Generalizable version of the evol_indices function to not
+        have to use the MSA data object to compute evol indices.
+
+        Args:
+            - wt_seq: seq with which to compare every mutant sequence against
+            - list_mutant_sequences: list of mutant sequences
+
+        NOTE: this assumes that the mutant sequences are already aligned to
+        the sequences in the MSA used for training.
+        """
+        # concatenating the sequences into same list
+        all_sequences = [wt_seq, *list_mutant_sequences]
+        # one hot encoded inputs:
+        one_hot_encoding = np.zeros(
+            (
+                len(all_sequences),
+                len(wt_seq),
+                len(alphabet),
+            )
+        )
+        for i, sequence in enumerate(all_sequences):
+            for j, letter in enumerate(sequence):
+                if letter in self.aa_dict:
+                    k = self.aa_dict[letter]
+                    one_hot_encoding[i, j, k] = 1.0
+
+        sequences_one_hot = torch.tensor(one_hot_encoding)
+        dataloader = torch.utils.data.DataLoader(
+            sequences_one_hot,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
+
+        prediction_matrix = torch.zeros((len(all_sequences), num_samples))
+
+        with torch.no_grad():
+            for i, batch in enumerate(
+                tqdm.tqdm(dataloader, "Looping through mutation batches")
+            ):
+                x = batch.type(self.dtype).to(self.device)
+                for j in tqdm.tqdm(
+                    range(num_samples),
+                    "Looping through number of samples for batch #: " + str(i + 1),
+                ):
+                    seq_predictions, _, _ = self.all_likelihood_components(x)
+                    prediction_matrix[i * batch_size : i * batch_size + len(x), j] = (
+                        seq_predictions
+                    )
+                tqdm.tqdm.write("\n")
+
+            mean_predictions = prediction_matrix.mean(dim=1, keepdim=False)
+            std_predictions = prediction_matrix.std(dim=1, keepdim=False)
+            delta_elbos = mean_predictions - mean_predictions[0]
+            evol_indices = -delta_elbos.detach().cpu().numpy()
+
+        return (
+            all_sequences,
+            evol_indices,
+            mean_predictions[0].detach().cpu().numpy(),
+            std_predictions.detach().cpu().numpy(),
+        )
